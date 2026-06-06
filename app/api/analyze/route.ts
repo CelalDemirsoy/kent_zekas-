@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const HF_MODEL = "Salesforce/blip-image-captioning-large";
+const HF_API_URL = `https://api-inference.huggingface.co/models/${HF_MODEL}`;
+
 type RiskSeviyesi = "düşük" | "orta" | "yüksek";
 
 interface TespitDetay {
@@ -28,9 +31,17 @@ interface AnalizYaniti {
     aciklama: string;
   }[];
   ozet: string;
+  kaynak?: "huggingface" | "mock";
+  caption?: string;
 }
 
-// Risk tanımları — temel ihtimal ve dosya adı anahtar kelimeleri
+// Caption analizi için anahtar kelime grupları
+const COP_TASAN_KELIMELER = ["trash", "garbage", "waste", "bin", "overflowing"];
+const COP_DOLU_KELIMELER = ["full", "filled"];
+const ISGALIYE_KELIMELER = ["chair", "table", "stall", "vendor"];
+const MOLOZ_KELIMELER = ["rubble", "debris", "construction"];
+const SU_KELIMELER = ["water", "puddle", "flood"];
+
 const RISK_TANIMLARI = [
   {
     anahtar: "copKonteyneriTasmis" as const,
@@ -73,7 +84,7 @@ const RISK_TANIMLARI = [
     kategori: "su" as const,
     etiket: "Su Birikintisi",
     temelIhtimal: 0.2,
-    anahtarKelimeler: ["su", "birikinti", "durgun", "su birikintisi", "water"],
+    anahtarKelimeler: ["su", "birikinti", "durgun", "water"],
     aciklamalar: [
       "Kaldırımda durgun su birikintisi tespit edildi, vektör riski mevcut.",
       "Yağmur sonrası oluşan su birikintisi görülüyor.",
@@ -100,6 +111,138 @@ function base64Ayristir(
   return { mediaType: "image/jpeg", data: temiz };
 }
 
+// Caption metninde geçen anahtar kelimeleri bulur
+function captiondaEslesenleriBul(
+  caption: string,
+  kelimeler: string[]
+): string[] {
+  const kucuk = caption.toLowerCase();
+  return kelimeler.filter((k) => kucuk.includes(k));
+}
+
+// Eşleşen kelime sayısına göre güven skoru hesaplar
+function guvenSkoruHesapla(eslesmeler: string[]): number {
+  if (eslesmeler.length === 0) return 0;
+  return Math.min(75 + eslesmeler.length * 8, 95);
+}
+
+// Güven skoruna göre risk seviyesi belirler
+function riskSeviyesiBelirle(guven: number): RiskSeviyesi {
+  if (guven >= 90) return "yüksek";
+  if (guven >= 80) return "orta";
+  return "düşük";
+}
+
+// Tespit edilmemiş risk için boş detay döndürür
+function bosTespit(): TespitDetay {
+  return { var: false, guven: 0, risk: "düşük", aciklama: "" };
+}
+
+// BLIP caption'ını analiz ederek kentsel risk tespiti üretir
+function captionAnalizEt(caption: string): AnalizSonucu {
+  const copTasan = captiondaEslesenleriBul(caption, COP_TASAN_KELIMELER);
+  const copDolu = captiondaEslesenleriBul(caption, COP_DOLU_KELIMELER);
+  const copEslesmeler = [...new Set([...copTasan, ...copDolu])];
+
+  const isgaliyeEslesmeler = captiondaEslesenleriBul(caption, ISGALIYE_KELIMELER);
+  const molozEslesmeler = captiondaEslesenleriBul(caption, MOLOZ_KELIMELER);
+  const suEslesmeler = captiondaEslesenleriBul(caption, SU_KELIMELER);
+
+  const copVar = copEslesmeler.length > 0;
+  const copGuven = guvenSkoruHesapla(copEslesmeler);
+
+  let copAciklama = "";
+  if (copVar) {
+    if (copDolu.length > 0 && copTasan.length === 0) {
+      copAciklama = `BLIP analizi: Çöp konteyneri dolu tespit edildi (${copDolu.join(", ")}). Caption: "${caption}"`;
+    } else if (copTasan.length > 0) {
+      copAciklama = `BLIP analizi: Çöp konteyneri taşıyor (${copTasan.join(", ")}). Caption: "${caption}"`;
+    } else {
+      copAciklama = `BLIP analizi: Çöp konteyneri riski tespit edildi. Caption: "${caption}"`;
+    }
+  }
+
+  const isgaliyeVar = isgaliyeEslesmeler.length > 0;
+  const isgaliyeGuven = guvenSkoruHesapla(isgaliyeEslesmeler);
+
+  const molozVar = molozEslesmeler.length > 0;
+  const molozGuven = guvenSkoruHesapla(molozEslesmeler);
+
+  const suVar = suEslesmeler.length > 0;
+  const suGuven = guvenSkoruHesapla(suEslesmeler);
+
+  return {
+    copKonteyneriTasmis: copVar
+      ? {
+          var: true,
+          guven: copGuven,
+          risk: riskSeviyesiBelirle(copGuven),
+          aciklama: copAciklama,
+        }
+      : bosTespit(),
+    isgaliye: isgaliyeVar
+      ? {
+          var: true,
+          guven: isgaliyeGuven,
+          risk: riskSeviyesiBelirle(isgaliyeGuven),
+          aciklama: `BLIP analizi: Kaldırım işgaliyesi tespit edildi (${isgaliyeEslesmeler.join(", ")}). Caption: "${caption}"`,
+        }
+      : bosTespit(),
+    moloz: molozVar
+      ? {
+          var: true,
+          guven: molozGuven,
+          risk: riskSeviyesiBelirle(molozGuven),
+          aciklama: `BLIP analizi: Moloz birikimi tespit edildi (${molozEslesmeler.join(", ")}). Caption: "${caption}"`,
+        }
+      : bosTespit(),
+    suBirikintisi: suVar
+      ? {
+          var: true,
+          guven: suGuven,
+          risk: riskSeviyesiBelirle(suGuven),
+          aciklama: `BLIP analizi: Su birikintisi tespit edildi (${suEslesmeler.join(", ")}). Caption: "${caption}"`,
+        }
+      : bosTespit(),
+  };
+}
+
+// Hugging Face BLIP modeline görüntü gönderip caption üretir
+async function huggingFaceCaptionAl(base64Data: string): Promise<string> {
+  const apiKey = process.env.HUGGINGFACE_API_KEY;
+  if (!apiKey) {
+    throw new Error("HUGGINGFACE_API_KEY ortam değişkeni tanımlı değil");
+  }
+
+  const imageBuffer = Buffer.from(base64Data, "base64");
+
+  const yanit = await fetch(HF_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/octet-stream",
+    },
+    body: imageBuffer,
+  });
+
+  if (!yanit.ok) {
+    const hataMetni = await yanit.text();
+    throw new Error(`Hugging Face API hatası (${yanit.status}): ${hataMetni}`);
+  }
+
+  const veri = await yanit.json();
+
+  if (Array.isArray(veri) && veri[0]?.generated_text) {
+    return veri[0].generated_text as string;
+  }
+
+  if (veri && typeof veri === "object" && "generated_text" in veri) {
+    return (veri as { generated_text: string }).generated_text;
+  }
+
+  throw new Error("Hugging Face caption yanıtı ayrıştırılamadı");
+}
+
 // Metin kaynağından deterministik sayısal tohum üretir
 function tohumUret(kaynak: string): number {
   let hash = 0;
@@ -116,13 +259,6 @@ function deterministikRastgele(tohum: number, indeks: number): number {
   return x - Math.floor(x);
 }
 
-// Güven skoruna göre risk seviyesi belirler
-function riskSeviyesiBelirle(guven: number): RiskSeviyesi {
-  if (guven >= 90) return "yüksek";
-  if (guven >= 80) return "orta";
-  return "düşük";
-}
-
 // Dosya adındaki anahtar kelimelere göre tespit ihtimalini artırır
 function ihtimalHesapla(
   temelIhtimal: number,
@@ -134,11 +270,10 @@ function ihtimalHesapla(
   return eslesme ? Math.min(temelIhtimal + 0.35, 0.95) : temelIhtimal;
 }
 
-// Mock analiz motoru — dosya adı ve görüntü verisine göre tespit üretir
+// Mock analiz motoru — API hata verirse yedek olarak kullanılır
 function mockAnalizYap(base64Data: string, dosyaAdi?: string): AnalizSonucu {
   const kaynak = (dosyaAdi ?? "") + base64Data.slice(0, 200);
   const tohum = tohumUret(kaynak);
-
   const tespitler = {} as AnalizSonucu;
 
   RISK_TANIMLARI.forEach((risk, indeks) => {
@@ -207,12 +342,12 @@ function sonuclariDonustur(tespitler: AnalizSonucu): AnalizYaniti["sonuclar"] {
   return sonuclar;
 }
 
-// Gerçek API gibi hissettirmek için belirtilen süre kadar bekletir
+// Belirtilen süre kadar bekletir — mock yedek analiz için
 function beklet(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// POST /api/analyze — base64 fotoğraf alır, mock analiz yapar, JSON döner
+// POST /api/analyze — Hugging Face BLIP ile analiz, hata durumunda mock yedek
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -236,10 +371,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Analiz süresini gerçekçi göstermek için 1.5 saniye bekle
-    await beklet(1500);
+    let tespitler: AnalizSonucu;
+    let kaynak: "huggingface" | "mock" = "huggingface";
+    let caption: string | undefined;
 
-    const tespitler = mockAnalizYap(ayristirilmis.data, dosyaAdi);
+    try {
+      caption = await huggingFaceCaptionAl(ayristirilmis.data);
+      tespitler = captionAnalizEt(caption);
+    } catch {
+      // Hugging Face API hata verirse mock analize düş
+      kaynak = "mock";
+      await beklet(1500);
+      tespitler = mockAnalizYap(ayristirilmis.data, dosyaAdi);
+    }
+
     const bildirimler = bildirimOlustur(tespitler);
     const sonuclar = sonuclariDonustur(tespitler);
 
@@ -255,6 +400,8 @@ export async function POST(request: NextRequest) {
       bildirimler,
       sonuclar,
       ozet,
+      kaynak,
+      caption,
     };
 
     return NextResponse.json(yanit);
