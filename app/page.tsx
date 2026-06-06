@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type RiskKategori = "cop" | "moloz" | "su" | "isgaliye";
 type RiskSeviyesi = "düşük" | "orta" | "yüksek";
@@ -14,6 +15,12 @@ interface TespitSonucu {
   bildirim: string;
 }
 
+interface KonumBilgisi {
+  enlem: number;
+  boylam: number;
+  metin: string;
+}
+
 interface BildirimKaydi {
   id: string;
   zaman: string;
@@ -22,9 +29,13 @@ interface BildirimKaydi {
   guven: number;
   risk: RiskSeviyesi;
   mesaj: string;
+  konum: KonumBilgisi | null;
   zabitaIletildi: boolean;
   ekipYonlendirildi: boolean;
 }
+
+type MenuId = "dashboard" | "denetim" | "bildirim" | "rapor" | "ayar";
+type GirisModu = "dosya" | "kamera";
 
 interface AnalizApiYaniti {
   basarili: boolean;
@@ -94,12 +105,12 @@ const KATEGORI_KARTLARI = [
   { id: "isgaliye" as const, baslik: "İşgaliye", ikon: "🪑", aciklama: "Kaçak tezgah" },
 ];
 
-const MENU = [
-  { id: "dashboard", label: "Dashboard", ikon: "▦", aktif: true },
-  { id: "denetim", label: "Saha Denetimi", ikon: "◎", aktif: false },
-  { id: "bildirim", label: "Bildirimler", ikon: "◈", aktif: false },
-  { id: "rapor", label: "Raporlar", ikon: "▤", aktif: false },
-  { id: "ayar", label: "Ayarlar", ikon: "⚙", aktif: false },
+const MENU: { id: MenuId; label: string; ikon: string }[] = [
+  { id: "dashboard", label: "Dashboard", ikon: "▦" },
+  { id: "denetim", label: "Saha Denetimi", ikon: "◎" },
+  { id: "bildirim", label: "Bildirimler", ikon: "◈" },
+  { id: "rapor", label: "Raporlar", ikon: "▤" },
+  { id: "ayar", label: "Ayarlar", ikon: "⚙" },
 ];
 
 // Yüklenen dosyayı base64 data URL formatına çevirir
@@ -126,9 +137,35 @@ function beklet(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Tespit sonuçlarından bildirim geçmişi kayıtları oluşturur
-function bildirimKayitlariOlustur(sonuclar: TespitSonucu[]): BildirimKaydi[] {
+// Cihaz konumunu alır — bildirimlere eklenir
+function konumAl(): Promise<KonumBilgisi | null> {
+  if (typeof navigator === "undefined" || !navigator.geolocation) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const enlem = pos.coords.latitude;
+        const boylam = pos.coords.longitude;
+        resolve({
+          enlem,
+          boylam,
+          metin: `${enlem.toFixed(5)}°N, ${boylam.toFixed(5)}°E`,
+        });
+      },
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+// Tespit sonuçlarından konumlu bildirim kayıtları oluşturur
+function bildirimKayitlariOlustur(
+  sonuclar: TespitSonucu[],
+  konum: KonumBilgisi | null
+): BildirimKaydi[] {
   const simdi = zamanDamgasi();
+  const konumMetni = konum ? konum.metin : "Konum alınamadı";
+
   return sonuclar.map((s, i) => ({
     id: `${Date.now()}-${s.kategori}-${i}`,
     zaman: simdi,
@@ -136,7 +173,8 @@ function bildirimKayitlariOlustur(sonuclar: TespitSonucu[]): BildirimKaydi[] {
     etiket: s.etiket,
     guven: s.guven,
     risk: s.risk,
-    mesaj: s.bildirim,
+    mesaj: `${s.bildirim} · 📍 ${konumMetni}`,
+    konum,
     zabitaIletildi: s.kategori === "isgaliye",
     ekipYonlendirildi: true,
   }));
@@ -150,38 +188,69 @@ const KVKK_KURALLARI = [
   { ikon: "✅", metin: "Kişisel veri işlenmez" },
 ];
 
-// Sabit KVKK uyumluluk kutusu — kural bildirgesi
-function KvkkKutusu() {
+// Sidebar altında KVKK kural bildirgesi — katlanabilir panel
+function KvkkPaneli({
+  acik,
+  degistir,
+}: {
+  acik: boolean;
+  degistir: () => void;
+}) {
   return (
-    <div className="fixed bottom-20 left-3 z-50 w-56 rounded-xl border border-emerald-500/25 bg-slate-900/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-md sm:bottom-auto sm:left-auto sm:right-3 sm:top-3 sm:w-64 sm:p-4 lg:right-5 lg:top-5">
-      <div className="mb-2.5 flex items-center gap-2 border-b border-emerald-500/20 pb-2.5">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-sm">
-          🛡️
-        </span>
-        <div>
-          <p className="text-xs font-bold text-emerald-400">KVKK Uyumlu</p>
-          <p className="text-[9px] text-slate-500">Kural Bildirgesi</p>
+    <div className="border-t border-slate-800 p-3">
+      <button
+        type="button"
+        onClick={degistir}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left transition hover:bg-slate-800"
+      >
+        <div className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-xs">
+            🛡️
+          </span>
+          <div>
+            <p className="text-xs font-semibold text-emerald-400">KVKK Uyumlu</p>
+            <p className="text-[9px] text-slate-500">Kural bildirgesi</p>
+          </div>
         </div>
-      </div>
-      <ul className="space-y-2">
-        {KVKK_KURALLARI.map((k) => (
-          <li key={k.metin} className="flex items-start gap-2 text-[10px] leading-snug text-slate-300 sm:text-[11px]">
-            <span className="shrink-0">{k.ikon}</span>
-            <span>{k.metin}</span>
-          </li>
-        ))}
-      </ul>
+        <svg
+          className={`h-4 w-4 text-slate-500 transition ${acik ? "rotate-180" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {acik && (
+        <ul className="mt-2 space-y-1.5 rounded-lg bg-slate-800/40 p-2.5">
+          {KVKK_KURALLARI.map((k) => (
+            <li key={k.metin} className="flex items-start gap-2 text-[10px] leading-snug text-slate-400">
+              <span className="shrink-0">{k.ikon}</span>
+              <span>{k.metin}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-// Sol sidebar — belediye logosu ve menü
+// Sol sidebar — KentAI markası ve navigasyon
 function Sidebar({
   acik,
   kapat,
+  aktifMenu,
+  menuTikla,
+  kvkkAcik,
+  kvkkDegistir,
 }: {
   acik: boolean;
   kapat: () => void;
+  aktifMenu: MenuId;
+  menuTikla: (id: MenuId) => void;
+  kvkkAcik: boolean;
+  kvkkDegistir: () => void;
 }) {
   return (
     <>
@@ -198,15 +267,15 @@ function Sidebar({
         }`}
       >
         <div className="border-b border-slate-800 p-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 shadow-lg shadow-blue-900/40">
-              <span className="text-sm font-black text-white">GB</span>
+          <Link href="/landing" className="flex items-center gap-3" onClick={kapat}>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 shadow-lg shadow-orange-900/30">
+              <span className="text-sm font-black text-white">KA</span>
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-white">Güngören Belediyesi</p>
-              <p className="text-[10px] text-slate-500">KentAI Kurumsal</p>
+              <p className="truncate text-sm font-bold text-white">KentAI</p>
+              <p className="text-[10px] text-slate-500">Otonom Denetim Platformu</p>
             </div>
-          </div>
+          </Link>
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
@@ -214,9 +283,10 @@ function Sidebar({
             <button
               key={item.id}
               type="button"
+              onClick={() => menuTikla(item.id)}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
-                item.aktif
-                  ? "bg-blue-600/15 font-semibold text-blue-400 ring-1 ring-blue-500/30"
+                aktifMenu === item.id
+                  ? "bg-orange-500/15 font-semibold text-orange-400 ring-1 ring-orange-500/30"
                   : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
               }`}
             >
@@ -226,10 +296,12 @@ function Sidebar({
           ))}
         </nav>
 
+        <KvkkPaneli acik={kvkkAcik} degistir={kvkkDegistir} />
+
         <div className="border-t border-slate-800 p-4">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300">
-              CD
+              OP
             </div>
             <div>
               <p className="text-xs font-medium text-slate-200">Denetim Operatörü</p>
@@ -249,8 +321,14 @@ const HERO_METRIKLER = [
   { deger: "4", etiket: "İhlal Kategorisi", ikon: "📋", renk: "text-orange-400" },
 ];
 
-// Hero banner — marka tanıtımı ve canlı demo CTA
-function HeroSection({ demoBaslat }: { demoBaslat: () => void }) {
+// Hero banner — marka tanıtımı ve canlı kamera CTA
+function HeroSection({
+  kameraBaslat,
+  denetimKaydir,
+}: {
+  kameraBaslat: () => void;
+  denetimKaydir: () => void;
+}) {
   return (
     <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/40 px-6 py-10 sm:px-10 sm:py-14">
       <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-blue-600/10 blur-3xl" aria-hidden />
@@ -277,20 +355,19 @@ function HeroSection({ demoBaslat }: { demoBaslat: () => void }) {
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <button
             type="button"
-            onClick={demoBaslat}
-            className="group flex items-center gap-2 rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-900/40 transition hover:bg-blue-500 hover:shadow-blue-800/50"
+            onClick={kameraBaslat}
+            className="group flex items-center gap-2 rounded-xl bg-orange-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-orange-900/40 transition hover:bg-orange-400"
           >
             <span className="flex h-2 w-2 rounded-full bg-emerald-400 group-hover:animate-pulse" />
-            Canlı Demo Başlat
+            Canlı Kamera ile Tespit
           </button>
-          <a
-            href="https://kent-zekasi-web.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-xl border border-slate-700 px-7 py-3.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800/60 hover:text-white"
+          <button
+            type="button"
+            onClick={denetimKaydir}
+            className="rounded-xl border border-slate-700 px-7 py-3.5 text-sm font-medium text-slate-300 transition hover:border-orange-500/40 hover:bg-slate-800/60 hover:text-white"
           >
-            kent-zekasi-web.vercel.app
-          </a>
+            Denetim Paneline Git
+          </button>
         </div>
       </div>
     </section>
@@ -370,6 +447,17 @@ function BildirimAkisSatiri({
 
       <p className="mt-1.5 text-[11px] text-slate-400">{kayit.mesaj}</p>
 
+      {kayit.konum && (
+        <a
+          href={`https://maps.google.com/?q=${kayit.konum.enlem},${kayit.konum.boylam}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 flex items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[10px] text-blue-400 transition hover:bg-blue-500/10"
+        >
+          📍 {kayit.konum.metin} — Haritada Aç
+        </a>
+      )}
+
       <div className="mt-2 flex flex-wrap gap-1.5">
         <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${stil.bg} ${stil.text}`}>
           %{kayit.guven} güven
@@ -448,6 +536,12 @@ function TespitKarti({
 
 export default function Home() {
   const [sidebarAcik, setSidebarAcik] = useState(false);
+  const [aktifMenu, setAktifMenu] = useState<MenuId>("dashboard");
+  const [kvkkAcik, setKvkkAcik] = useState(false);
+  const [girisModu, setGirisModu] = useState<GirisModu>("dosya");
+  const [kameraAktif, setKameraAktif] = useState(false);
+  const [kameraHata, setKameraHata] = useState<string | null>(null);
+  const [mevcutKonum, setMevcutKonum] = useState<KonumBilgisi | null>(null);
   const [dosya, setDosya] = useState<File | null>(null);
   const [onizleme, setOnizleme] = useState<string | null>(null);
   const [surukleniyor, setSurukleniyor] = useState(false);
@@ -465,12 +559,113 @@ export default function Home() {
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const denetimRef = useRef<HTMLDivElement>(null);
+  const bildirimRef = useRef<HTMLElement>(null);
+  const raporRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  // Canlı demo butonu — analiz paneline kaydırır
-  const demoBaslat = useCallback(() => {
-    denetimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setTimeout(() => inputRef.current?.click(), 400);
+  // Sayfa yüklendiğinde konum al
+  useEffect(() => {
+    konumAl().then(setMevcutKonum);
   }, []);
+
+  // Kamera stream'ini video elementine bağla
+  useEffect(() => {
+    if (kameraAktif && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [kameraAktif]);
+
+  // Kamera stream'ini temizle
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const denetimKaydir = useCallback(() => {
+    setAktifMenu("denetim");
+    denetimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // Sidebar menü navigasyonu
+  const menuTikla = useCallback(
+    (id: MenuId) => {
+      setAktifMenu(id);
+      setSidebarAcik(false);
+
+      if (id === "dashboard") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } else if (id === "denetim") {
+        denetimKaydir();
+      } else if (id === "bildirim") {
+        bildirimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (id === "rapor") {
+        raporRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (id === "ayar") {
+        setKvkkAcik(true);
+        denetimKaydir();
+      }
+    },
+    [denetimKaydir]
+  );
+
+  // Kamerayı durdurur
+  const kameraDurdur = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setKameraAktif(false);
+  }, []);
+
+  // Canlı kamerayı başlatır
+  const kameraBaslat = useCallback(async () => {
+    setKameraHata(null);
+    setGirisModu("kamera");
+    denetimKaydir();
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setKameraAktif(true);
+    } catch {
+      setKameraHata("Kamera erişimi reddedildi. Tarayıcı izinlerini kontrol edin.");
+      setKameraAktif(false);
+    }
+  }, [denetimKaydir]);
+
+  // Kameradan kare yakalar ve analiz için dosya oluşturur
+  const kareYakala = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        kameraDurdur();
+        const file = new File([blob], `kamera-${Date.now()}.jpg`, { type: "image/jpeg" });
+        setDosya(file);
+        setOnizleme(URL.createObjectURL(blob));
+        setSonuclar([]);
+        setOzet("");
+        setHata(null);
+        setGoruntuSilindi(false);
+      },
+      "image/jpeg",
+      0.92
+    );
+  }, [kameraDurdur]);
 
   const analizSifirla = useCallback(() => {
     setSonuclar([]);
@@ -483,11 +678,13 @@ export default function Home() {
   const dosyaIsle = useCallback(
     (file: File) => {
       if (!file.type.startsWith("image/")) return;
+      kameraDurdur();
+      setGirisModu("dosya");
       setDosya(file);
       setOnizleme(URL.createObjectURL(file));
       analizSifirla();
     },
-    [analizSifirla]
+    [analizSifirla, kameraDurdur]
   );
 
   const surukleBirak = useCallback(
@@ -530,7 +727,10 @@ export default function Home() {
         bildirim: BILDIRIM_MAP[s.kategori],
       }));
 
-      const yeniKayitlar = bildirimKayitlariOlustur(eslesmisSonuclar);
+      const konum = (await konumAl()) ?? mevcutKonum;
+      if (konum) setMevcutKonum(konum);
+
+      const yeniKayitlar = bildirimKayitlariOlustur(eslesmisSonuclar, konum);
 
       setSonuclar(eslesmisSonuclar);
       setBildirimGecmisi((prev) => [...yeniKayitlar, ...prev]);
@@ -553,14 +753,21 @@ export default function Home() {
     } finally {
       setAnalizYapiliyor(false);
     }
-  }, [dosya, analizSifirla, anonimlestiriliyor, analizYapiliyor]);
+  }, [dosya, analizSifirla, anonimlestiriliyor, analizYapiliyor, mevcutKonum]);
 
   const islemDevamEdiyor = anonimlestiriliyor || analizYapiliyor;
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
-      <KvkkKutusu />
-      <Sidebar acik={sidebarAcik} kapat={() => setSidebarAcik(false)} />
+      <Sidebar
+        acik={sidebarAcik}
+        kapat={() => setSidebarAcik(false)}
+        aktifMenu={aktifMenu}
+        menuTikla={menuTikla}
+        kvkkAcik={kvkkAcik}
+        kvkkDegistir={() => setKvkkAcik((a) => !a)}
+      />
+      <canvas ref={canvasRef} className="hidden" aria-hidden />
 
       <div className="flex min-w-0 flex-1 flex-col lg:ml-0">
         {/* Üst bar */}
@@ -577,10 +784,10 @@ export default function Home() {
               </svg>
             </button>
 
-            <div className="min-w-0 flex-1 pr-4 sm:pr-56 lg:pr-64">
+            <div className="min-w-0 flex-1">
               <h1 className="truncate text-sm font-bold text-white sm:text-lg">
                 KentAI
-                <span className="ml-1.5 font-normal text-blue-400 sm:ml-2">
+                <span className="ml-1.5 font-normal text-orange-400 sm:ml-2">
                   Otonom Kentsel Denetim Platformu
                 </span>
               </h1>
@@ -589,9 +796,16 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="hidden items-center gap-2 sm:flex">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-              <span className="text-xs text-slate-400">Sistem Aktif</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setKvkkAcik(true); setSidebarAcik(true); }}
+                className="hidden items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400 sm:flex"
+              >
+                🛡️ KVKK
+              </button>
+              <span className="hidden h-2 w-2 animate-pulse rounded-full bg-emerald-500 sm:block" />
+              <span className="hidden text-xs text-slate-400 sm:block">Aktif</span>
             </div>
           </div>
         </header>
@@ -600,8 +814,10 @@ export default function Home() {
         <div className="flex flex-1 flex-col xl:flex-row">
           {/* Orta içerik */}
           <main className="flex min-w-0 flex-1 flex-col gap-5 p-4 sm:gap-6 sm:p-6">
-            <HeroSection demoBaslat={demoBaslat} />
-            <HeroMetrikBar />
+            <HeroSection kameraBaslat={kameraBaslat} denetimKaydir={denetimKaydir} />
+            <div ref={raporRef}>
+              <HeroMetrikBar />
+            </div>
 
             <div className="flex items-center gap-3 pt-2">
               <div className="h-px flex-1 bg-slate-800" />
@@ -619,22 +835,95 @@ export default function Home() {
               {/* Fotoğraf yükleme + analiz */}
               <div className="flex flex-col gap-4">
                 <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
-                  <h2 className="text-sm font-semibold text-slate-200">Saha Görüntüsü Analizi</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    KVKK uyumlu · Yalnızca cansız kentsel obje tespiti
-                  </p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-sm font-semibold text-slate-200">Saha Görüntüsü Analizi</h2>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Dosya yükle veya canlı kamera ile tespit yap
+                      </p>
+                    </div>
+                    {mevcutKonum && (
+                      <span className="self-start rounded-lg border border-blue-500/20 bg-blue-500/5 px-2.5 py-1 text-[10px] text-blue-400">
+                        📍 {mevcutKonum.metin}
+                      </span>
+                    )}
+                  </div>
 
+                  <div className="mt-4 flex rounded-lg border border-slate-800 bg-slate-900 p-1">
+                    <button
+                      type="button"
+                      onClick={() => { setGirisModu("dosya"); kameraDurdur(); }}
+                      className={`flex-1 rounded-md py-2 text-xs font-medium transition ${
+                        girisModu === "dosya"
+                          ? "bg-orange-500/15 text-orange-400"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      📁 Dosya Yükle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={kameraBaslat}
+                      className={`flex-1 rounded-md py-2 text-xs font-medium transition ${
+                        girisModu === "kamera"
+                          ? "bg-orange-500/15 text-orange-400"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      📷 Canlı Kamera
+                    </button>
+                  </div>
+
+                  {kameraHata && (
+                    <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                      {kameraHata}
+                    </p>
+                  )}
+
+                  {girisModu === "kamera" && kameraAktif && !onizleme && (
+                    <div className="relative mt-4 overflow-hidden rounded-xl border border-orange-500/30 bg-black">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="h-[300px] w-full object-cover"
+                      />
+                      <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-red-500/80 px-2.5 py-1 text-[10px] font-bold text-white">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                        CANLI
+                      </div>
+                      <div className="absolute bottom-3 left-3 right-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={kareYakala}
+                          className="flex-1 rounded-xl bg-orange-500 py-3 text-sm font-semibold text-white transition hover:bg-orange-400"
+                        >
+                          Kare Yakala & Analiz Et
+                        </button>
+                        <button
+                          type="button"
+                          onClick={kameraDurdur}
+                          className="rounded-xl border border-slate-600 bg-slate-900/80 px-4 py-3 text-sm text-slate-300 hover:text-white"
+                        >
+                          Kapat
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {(girisModu === "dosya" || onizleme) && (
                   <section
                     onDragOver={(e) => { e.preventDefault(); setSurukleniyor(true); }}
                     onDragLeave={() => setSurukleniyor(false)}
                     onDrop={surukleBirak}
-                    onClick={() => !onizleme && inputRef.current?.click()}
+                    onClick={() => !onizleme && girisModu === "dosya" && inputRef.current?.click()}
                     className={`relative mt-4 flex min-h-[220px] cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-all sm:min-h-[300px] ${
                       surukleniyor
-                        ? "border-blue-500 bg-blue-500/5"
+                        ? "border-orange-500 bg-orange-500/5"
                         : onizleme
                           ? "border-slate-700 bg-slate-900"
-                          : "border-slate-700/60 hover:border-blue-500/40 hover:bg-slate-900/60"
+                          : "border-slate-700/60 hover:border-orange-500/40 hover:bg-slate-900/60"
                     }`}
                   >
                     <input
@@ -698,9 +987,17 @@ export default function Home() {
                         </div>
                         <p className="mt-3 text-sm font-medium text-slate-300">Sokak fotoğrafını yükleyin</p>
                         <p className="mt-1 text-xs text-slate-500">Sürükle-bırak veya dosya seç · JPG, PNG, WEBP</p>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
+                          className="mt-3 rounded-lg bg-orange-500/15 px-4 py-2 text-xs font-medium text-orange-400 ring-1 ring-orange-500/30 hover:bg-orange-500/25"
+                        >
+                          Dosya Seç
+                        </button>
                       </div>
                     )}
                   </section>
+                  )}
 
                   {anonimlestiriliyor && (
                     <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
@@ -716,7 +1013,7 @@ export default function Home() {
                       type="button"
                       onClick={analizBaslat}
                       disabled={islemDevamEdiyor}
-                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 disabled:opacity-50"
+                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-900/30 transition hover:bg-orange-400 disabled:opacity-50"
                     >
                       {analizYapiliyor ? (
                         <>
@@ -817,7 +1114,10 @@ export default function Home() {
           </main>
 
           {/* Sağ panel — gerçek zamanlı bildirim akışı */}
-          <aside className="flex w-full flex-col border-t border-slate-800 bg-slate-900/60 xl:w-80 xl:border-l xl:border-t-0">
+          <aside
+            ref={bildirimRef}
+            className="flex w-full flex-col border-t border-slate-800 bg-slate-900/60 xl:w-80 xl:border-l xl:border-t-0"
+          >
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold text-slate-100">Bildirim Akışı</h2>
