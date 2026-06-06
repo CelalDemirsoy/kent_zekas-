@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "KentAI Mobile",
+    "slug": "kentai-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android", "web"],
+    "permissions": ["CAMERA"],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "KentAI saha denetimi için kamera görüntüsü kullanýr."
+      }
+    },
+    "android": {
+      "permissions": ["android.permission.CAMERA"]
+    }
+  }
+}

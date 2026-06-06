@@ -44,6 +44,13 @@ interface AnalizApiYaniti {
   sonuclar?: Omit<TespitSonucu, "bildirim">[];
 }
 
+interface MockAnalizSonucu {
+  id: number;
+  type: "Moloz" | "İşgaliye";
+  confidence: number;
+  message: string;
+}
+
 interface Istatistikler {
   bugunTespit: number;
   gonderilenBildirim: number;
@@ -54,8 +61,18 @@ const BILDIRIM_MAP: Record<RiskKategori, string> = {
   cop: "Çöp toplama ekibine bildirim gönderildi",
   isgaliye: "Zabıtaya uyarı iletildi",
   moloz: "Temizlik ekibine bildirim gönderildi",
-  su: "İlaçlama ekibine risk bildirimi gönderildi",
+  su: "İlaçlama ekibine bildirim gönderildi",
 };
+
+const FALLBACK_MOCK_SONUCLAR: MockAnalizSonucu[] = [
+  {
+    id: 1,
+    type: "Moloz",
+    confidence: 0.94,
+    message:
+      "Güngören bölgesinde 2m² atık birikimi tespit edildi. Çevre temizlik birimine otonom iş emri açıldı.",
+  },
+];
 
 const EKIP_MAP: Record<RiskKategori, string> = {
   cop: "Çöp Toplama",
@@ -101,7 +118,7 @@ const KATEGORI_STIL: Record<
 const KATEGORI_KARTLARI = [
   { id: "cop" as const, baslik: "Çöp Konteyneri", ikon: "🗑️", aciklama: "Taşan konteyner" },
   { id: "moloz" as const, baslik: "Moloz", ikon: "🧱", aciklama: "Atık birikimi" },
-  { id: "su" as const, baslik: "Su Birikintisi", ikon: "💧", aciklama: "Vektör riski" },
+  { id: "su" as const, baslik: "Su Birikintisi", ikon: "💧", aciklama: "Vektör kontrolü" },
   { id: "isgaliye" as const, baslik: "İşgaliye", ikon: "🪑", aciklama: "Kaçak tezgah" },
 ];
 
@@ -121,6 +138,75 @@ function dosyayiBase64eCevir(dosya: File): Promise<string> {
     okuyucu.onerror = () => reject(new Error("Fotoğraf okunamadı"));
     okuyucu.readAsDataURL(dosya);
   });
+}
+
+// API 3 saniyede cevap vermezse isteği iptal eder
+async function timeoutIleFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 3000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+// Mock sonucu uygulamanın ortak tespit formatına çevirir
+function mockSonucuDonustur(sonuc: MockAnalizSonucu): TespitSonucu {
+  const kategori: RiskKategori = sonuc.type === "Moloz" ? "moloz" : "isgaliye";
+  const guven = Math.round(sonuc.confidence * 100);
+
+  return {
+    kategori,
+    etiket: sonuc.type,
+    guven,
+    risk: guven >= 90 ? "yüksek" : "orta",
+    aciklama: sonuc.message,
+    bildirim: BILDIRIM_MAP[kategori],
+  };
+}
+
+// Backend veya mock yanıtını tespit listesine dönüştürür
+function analizSonucunuNormalizeEt(veri: unknown): {
+  sonuclar: TespitSonucu[];
+  ozet: string;
+  fallback: boolean;
+} {
+  if (Array.isArray(veri)) {
+    const sonuclar = (veri as MockAnalizSonucu[]).map(mockSonucuDonustur);
+    return {
+      sonuclar,
+      ozet: `${sonuclar.length} tespit oluşturuldu. Mock güvenli fallback kullanıldı.`,
+      fallback: true,
+    };
+  }
+
+  const apiVerisi = veri as AnalizApiYaniti;
+  if (!apiVerisi?.basarili || !apiVerisi.sonuclar?.length) {
+    throw new Error(apiVerisi?.hata || "API geçerli analiz sonucu döndürmedi");
+  }
+
+  const sonuclar: TespitSonucu[] = apiVerisi.sonuclar.map((s) => ({
+    ...s,
+    bildirim: BILDIRIM_MAP[s.kategori],
+  }));
+
+  return {
+    sonuclar,
+    ozet: apiVerisi.ozet ?? `${sonuclar.length} tespit oluşturuldu.`,
+    fallback: false,
+  };
+}
+
+// Go backend varsa Render URL'ine, yoksa Next.js API fallback'ine gider.
+function analyzeEndpoint(): string {
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
+  return backendUrl ? `${backendUrl}/analyze` : "/api/analyze";
 }
 
 // Anlık zaman damgası üretir
@@ -450,8 +536,8 @@ function BildirimAkisSatiri({
       {kayit.konum && (
         <a
           href={`https://maps.google.com/?q=${kayit.konum.enlem},${kayit.konum.boylam}`}
-          target="_blank"
-          rel="noopener noreferrer"
+            target="_blank"
+            rel="noopener noreferrer"
           className="mt-2 flex items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[10px] text-blue-400 transition hover:bg-blue-500/10"
         >
           📍 {kayit.konum.metin} — Haritada Aç
@@ -461,9 +547,6 @@ function BildirimAkisSatiri({
       <div className="mt-2 flex flex-wrap gap-1.5">
         <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${stil.bg} ${stil.text}`}>
           %{kayit.guven} güven
-        </span>
-        <span className="rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] capitalize text-slate-400">
-          {kayit.risk} risk
         </span>
       </div>
 
@@ -564,6 +647,7 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sonAnalizDosyasiRef = useRef<File | null>(null);
 
   // Sayfa yüklendiğinde konum al
   useEffect(() => {
@@ -711,21 +795,37 @@ export default function Home() {
 
     try {
       const image = await dosyayiBase64eCevir(dosya);
-      const yanit = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, dosyaAdi: dosya.name }),
-      });
+      let analizVerisi: unknown;
 
-      const veri: AnalizApiYaniti = await yanit.json();
-      if (!yanit.ok || !veri.basarili) {
-        throw new Error(veri.hata || "Analiz sırasında beklenmeyen bir hata oluştu");
+      try {
+        const yanit = await timeoutIleFetch(
+          analyzeEndpoint(),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image, dosyaAdi: dosya.name }),
+          },
+          3000
+        );
+
+        if (!yanit.ok) {
+          throw new Error("API cevap veremedi");
+        }
+
+        analizVerisi = await yanit.json();
+      } catch {
+        // API timeout, hata veya sunucu çökmesi durumunda uygulama mock veriyle devam eder
+        analizVerisi = FALLBACK_MOCK_SONUCLAR;
       }
 
-      const eslesmisSonuclar: TespitSonucu[] = (veri.sonuclar ?? []).map((s) => ({
-        ...s,
-        bildirim: BILDIRIM_MAP[s.kategori],
-      }));
+      let normalizeSonuc: ReturnType<typeof analizSonucunuNormalizeEt>;
+      try {
+        normalizeSonuc = analizSonucunuNormalizeEt(analizVerisi);
+      } catch {
+        normalizeSonuc = analizSonucunuNormalizeEt(FALLBACK_MOCK_SONUCLAR);
+      }
+
+      const eslesmisSonuclar = normalizeSonuc.sonuclar;
 
       const konum = (await konumAl()) ?? mevcutKonum;
       if (konum) setMevcutKonum(konum);
@@ -734,7 +834,8 @@ export default function Home() {
 
       setSonuclar(eslesmisSonuclar);
       setBildirimGecmisi((prev) => [...yeniKayitlar, ...prev]);
-      setOzet(veri.ozet ?? "");
+      setOzet(normalizeSonuc.ozet);
+      setHata(null);
 
       if (eslesmisSonuclar.length > 0) {
         setIstatistikler((prev) => ({
@@ -756,6 +857,14 @@ export default function Home() {
   }, [dosya, analizSifirla, anonimlestiriliyor, analizYapiliyor, mevcutKonum]);
 
   const islemDevamEdiyor = anonimlestiriliyor || analizYapiliyor;
+
+  // Dosya seçilince veya kameradan kare yakalanınca analiz otomatik başlar
+  useEffect(() => {
+    if (!dosya || islemDevamEdiyor || sonAnalizDosyasiRef.current === dosya) return;
+
+    sonAnalizDosyasiRef.current = dosya;
+    void analizBaslat();
+  }, [dosya, islemDevamEdiyor, analizBaslat]);
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -899,7 +1008,7 @@ export default function Home() {
                           onClick={kareYakala}
                           className="flex-1 rounded-xl bg-orange-500 py-3 text-sm font-semibold text-white transition hover:bg-orange-400"
                         >
-                          Kare Yakala & Analiz Et
+                          Fotoğraf Çek
                         </button>
                         <button
                           type="button"
@@ -1021,7 +1130,7 @@ export default function Home() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                           </svg>
-                          Risk analizi yapılıyor…
+                          Analiz yapılıyor…
                         </>
                       ) : (
                         "Denetimi Başlat"

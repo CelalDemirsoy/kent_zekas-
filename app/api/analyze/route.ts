@@ -67,9 +67,31 @@ const MOLOZ_ACIKLAMALAR = [
 ];
 
 const SU_ACIKLAMALAR = [
-  "KentAI Vision: Kaldırımda durgun su birikintisi tespit edildi, vektör riski mevcut.",
+  "KentAI Vision: Kaldırımda durgun su birikintisi tespit edildi, vektör kontrolü gerekli.",
   "KentAI Vision: Yağmur sonrası oluşan su birikintisi görülüyor.",
   "KentAI Vision: Drenaj sorunu kaynaklı su birikintisi alanı tespit edildi.",
+];
+
+const DOSYA_ADI_KURALLARI: {
+  kategori: "cop" | "isgaliye" | "moloz" | "su";
+  kelimeler: string[];
+}[] = [
+  {
+    kategori: "cop",
+    kelimeler: ["cop", "çöp", "trash", "garbage", "waste", "bin"],
+  },
+  {
+    kategori: "isgaliye",
+    kelimeler: ["isgaliye", "masa", "sandalye", "cafe"],
+  },
+  {
+    kategori: "moloz",
+    kelimeler: ["moloz", "insaat", "debris"],
+  },
+  {
+    kategori: "su",
+    kelimeler: ["su", "water", "puddle"],
+  },
 ];
 
 // Base64 görüntü verisini doğrular ve ayrıştırır
@@ -112,96 +134,91 @@ function rastgeleSec<T>(dizi: T[]): T {
   return dizi[Math.floor(Math.random() * dizi.length)];
 }
 
-// Olasılık tabanlı tespit bayrakları üretir
-function olasilikTespitleriUret(): {
-  cop: boolean;
-  isgaliye: boolean;
-  moloz: boolean;
-  su: boolean;
-} {
-  return {
-    cop: Math.random() < 0.7,
-    isgaliye: Math.random() < 0.5,
-    moloz: Math.random() < 0.3,
-    su: Math.random() < 0.2,
-  };
+// Dosya adından kategori yakalar; eşleşirse yanlış kategori çıkmasını engeller
+function dosyaAdindanKategoriBul(
+  dosyaAdi?: string
+): "cop" | "isgaliye" | "moloz" | "su" | null {
+  if (!dosyaAdi) return null;
+
+  const ad = dosyaAdi.toLocaleLowerCase("tr-TR");
+  const kural = DOSYA_ADI_KURALLARI.find((k) =>
+    k.kelimeler.some((kelime) => ad.includes(kelime))
+  );
+
+  return kural?.kategori ?? null;
 }
 
-// En az 1–2 tespit çıkmasını garanti eder
-function minTespitGarantisi(bayraklar: {
-  cop: boolean;
-  isgaliye: boolean;
-  moloz: boolean;
-  su: boolean;
-}): typeof bayraklar {
-  const say = () =>
-    [bayraklar.cop, bayraklar.isgaliye, bayraklar.moloz, bayraklar.su].filter(
-      Boolean
-    ).length;
+// Eşleşme yoksa her kategoriye skor verip en baskın olanı seçer
+function baskinKategoriSec(): "cop" | "isgaliye" | "moloz" | "su" {
+  const skorlar = [
+    { kategori: "cop" as const, skor: Math.random() * 0.7 },
+    { kategori: "isgaliye" as const, skor: Math.random() * 0.5 },
+    { kategori: "moloz" as const, skor: Math.random() * 0.3 },
+    { kategori: "su" as const, skor: Math.random() * 0.2 },
+  ];
 
-  if (say() === 0) {
-    bayraklar.cop = true;
-    if (Math.random() < 0.65) bayraklar.isgaliye = true;
-    return bayraklar;
-  }
-
-  if (say() === 1 && Math.random() < 0.75) {
-    if (!bayraklar.cop) bayraklar.cop = true;
-    else if (!bayraklar.isgaliye) bayraklar.isgaliye = true;
-    else if (!bayraklar.moloz) bayraklar.moloz = true;
-    else bayraklar.su = true;
-  }
-
-  return bayraklar;
+  skorlar.sort((a, b) => b.skor - a.skor);
+  return skorlar[0].kategori;
 }
 
-// KentAI Vision akıllı mock analiz motoru
-function kentaiVisionAnaliz(): AnalizSonucu {
-  const bayraklar = minTespitGarantisi(olasilikTespitleriUret());
-
+// Dosya adı eşleştiğinde yalnızca ilgili kategoriyi tespit eder
+function tekKategoriAnaliz(kategori: "cop" | "isgaliye" | "moloz" | "su"): AnalizSonucu {
   const copGuven = guvenSkoruUret();
-  const copTasan = Math.random() < 0.55;
-
   const isgaliyeGuven = guvenSkoruUret();
   const molozGuven = guvenSkoruUret();
   const suGuven = guvenSkoruUret();
 
   return {
-    copKonteyneriTasmis: bayraklar.cop
-      ? {
-          var: true,
-          guven: copGuven,
-          risk: riskSeviyesiBelirle(copGuven),
-          aciklama: copTasan
-            ? "KentAI Vision: Çöp konteyneri TAŞIYOR — kapasite aşıldı, çevreye atık saçılmış."
-            : "KentAI Vision: Çöp konteyneri DOLU — acil boşaltım gerekli.",
-        }
-      : bosTespit(),
-    isgaliye: bayraklar.isgaliye
-      ? {
-          var: true,
-          guven: isgaliyeGuven,
-          risk: riskSeviyesiBelirle(isgaliyeGuven),
-          aciklama: rastgeleSec(ISGALIYE_ACIKLAMALAR),
-        }
-      : bosTespit(),
-    moloz: bayraklar.moloz
-      ? {
-          var: true,
-          guven: molozGuven,
-          risk: riskSeviyesiBelirle(molozGuven),
-          aciklama: rastgeleSec(MOLOZ_ACIKLAMALAR),
-        }
-      : bosTespit(),
-    suBirikintisi: bayraklar.su
-      ? {
-          var: true,
-          guven: suGuven,
-          risk: riskSeviyesiBelirle(suGuven),
-          aciklama: rastgeleSec(SU_ACIKLAMALAR),
-        }
-      : bosTespit(),
+    copKonteyneriTasmis:
+      kategori === "cop"
+        ? {
+            var: true,
+            guven: copGuven,
+            risk: riskSeviyesiBelirle(copGuven),
+            aciklama:
+              Math.random() < 0.55
+                ? "KentAI Vision: Dosya adına göre Çöp konteyneri TAŞIYOR olarak tespit edildi."
+                : "KentAI Vision: Dosya adına göre Çöp konteyneri DOLU olarak tespit edildi.",
+          }
+        : bosTespit(),
+    isgaliye:
+      kategori === "isgaliye"
+        ? {
+            var: true,
+            guven: isgaliyeGuven,
+            risk: riskSeviyesiBelirle(isgaliyeGuven),
+            aciklama: rastgeleSec(ISGALIYE_ACIKLAMALAR),
+          }
+        : bosTespit(),
+    moloz:
+      kategori === "moloz"
+        ? {
+            var: true,
+            guven: molozGuven,
+            risk: riskSeviyesiBelirle(molozGuven),
+            aciklama: rastgeleSec(MOLOZ_ACIKLAMALAR),
+          }
+        : bosTespit(),
+    suBirikintisi:
+      kategori === "su"
+        ? {
+            var: true,
+            guven: suGuven,
+            risk: riskSeviyesiBelirle(suGuven),
+            aciklama: rastgeleSec(SU_ACIKLAMALAR),
+          }
+        : bosTespit(),
   };
+}
+
+// KentAI Vision akıllı mock analiz motoru
+function kentaiVisionAnaliz(dosyaAdi?: string): AnalizSonucu {
+  const dosyaKategorisi = dosyaAdindanKategoriBul(dosyaAdi);
+  if (dosyaKategorisi) {
+    return tekKategoriAnaliz(dosyaKategorisi);
+  }
+
+  return tekKategoriAnaliz(baskinKategoriSec());
 }
 
 // Tespit sonuçlarına göre ilgili ekiplere bildirim mesajları üretir
@@ -218,7 +235,7 @@ function bildirimOlustur(tespitler: AnalizSonucu): string[] {
     bildirimler.push("Temizlik ekibine bildirim gönderildi");
   }
   if (tespitler.suBirikintisi.var) {
-    bildirimler.push("İlaçlama ekibine risk bildirimi gönderildi");
+    bildirimler.push("İlaçlama ekibine bildirim gönderildi");
   }
 
   return bildirimler;
@@ -253,7 +270,7 @@ function beklet(ms: number): Promise<void> {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { image } = body as { image?: string };
+    const { image, dosyaAdi } = body as { image?: string; dosyaAdi?: string };
 
     if (!image || typeof image !== "string") {
       return NextResponse.json(
@@ -272,12 +289,12 @@ export async function POST(request: NextRequest) {
 
     await beklet(1500);
 
-    const tespitler = kentaiVisionAnaliz();
+    const tespitler = kentaiVisionAnaliz(dosyaAdi);
     const bildirimler = bildirimOlustur(tespitler);
     const sonuclar = sonuclariDonustur(tespitler);
 
     const tespitSayisi = sonuclar.length;
-    const ozet = `${tespitSayisi} risk tespit edildi. ${bildirimler.length} bildirim oluşturuldu.`;
+    const ozet = `${tespitSayisi} tespit oluşturuldu. ${bildirimler.length} bildirim gönderildi.`;
 
     const yanit: AnalizYaniti = {
       basarili: true,
