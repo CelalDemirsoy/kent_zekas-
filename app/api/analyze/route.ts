@@ -55,21 +55,21 @@ const RISK_TANIMLARI = [
 ];
 
 const ISGALIYE_ACIKLAMALAR = [
-  "KentAI Vision: Kaldırımda kaçak masa ve sandalye yerleşimi tespit edildi.",
-  "KentAI Vision: Yaya yolunu daraltan işgaliye unsurları mevcut.",
-  "KentAI Vision: İşyeri tezgahı kaldırım alanını işgal ediyor.",
+  "Kaldırım üzerinde izinsiz masa ve sandalye kullanımı kayda alındı.",
+  "Yaya geçiş alanını daraltan işgaliye unsuruna işlem kaydı açıldı.",
+  "Kamu kullanım alanında izinsiz tezgah yerleşimi tespit edildi.",
 ];
 
 const MOLOZ_ACIKLAMALAR = [
-  "KentAI Vision: Yol kenarında moloz ve inşaat atığı birikimi görülüyor.",
-  "KentAI Vision: Kaldırım kenarında moloz yığını tespit edildi.",
-  "KentAI Vision: Dağınık moloz ve hurda malzeme birikintisi mevcut.",
+  "Yol kenarında inşaat atığı ve moloz birikimi için temizlik kaydı oluşturuldu.",
+  "Kaldırım kenarında kaldırılması gereken moloz yığını kayda alındı.",
+  "Dağınık atık ve hurda malzeme birikimi ilgili birime yönlendirildi.",
 ];
 
 const SU_ACIKLAMALAR = [
-  "KentAI Vision: Kaldırımda durgun su birikintisi tespit edildi, vektör kontrolü gerekli.",
-  "KentAI Vision: Yağmur sonrası oluşan su birikintisi görülüyor.",
-  "KentAI Vision: Drenaj sorunu kaynaklı su birikintisi alanı tespit edildi.",
+  "Kaldırımda durgun su birikintisi kayda alındı; saha kontrolü önerildi.",
+  "Yağış sonrası oluşan su birikintisi ilgili bakım birimine iletildi.",
+  "Drenaj kaynaklı su birikintisi için saha inceleme kaydı açıldı.",
 ];
 
 const DOSYA_ADI_KURALLARI: {
@@ -177,8 +177,8 @@ function tekKategoriAnaliz(kategori: "cop" | "isgaliye" | "moloz" | "su"): Anali
             risk: riskSeviyesiBelirle(copGuven),
             aciklama:
               Math.random() < 0.55
-                ? "KentAI Vision: Dosya adına göre Çöp konteyneri TAŞIYOR olarak tespit edildi."
-                : "KentAI Vision: Dosya adına göre Çöp konteyneri DOLU olarak tespit edildi.",
+                ? "Çöp konteynerinde taşma seviyesi gözlendi; toplama ekibine görev açıldı."
+                : "Çöp konteyneri doluluk eşiğini aşmış görünüyor; boşaltım kaydı oluşturuldu.",
           }
         : bosTespit(),
     isgaliye:

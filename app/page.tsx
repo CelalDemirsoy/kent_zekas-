@@ -423,7 +423,7 @@ function HeroSection({
       <div className="relative mx-auto max-w-3xl text-center">
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-500/25 bg-blue-500/10 px-4 py-1.5">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-          <span className="text-xs font-medium text-blue-300">B2G · Belediyeler İçin</span>
+          <span className="text-xs font-medium text-blue-300">Kamu Operasyonları İçin</span>
         </div>
 
         <h1 className="bg-gradient-to-r from-white via-blue-100 to-blue-400 bg-clip-text text-5xl font-black tracking-tight text-transparent sm:text-7xl">
@@ -431,11 +431,11 @@ function HeroSection({
         </h1>
 
         <p className="mt-4 text-lg font-semibold leading-snug text-slate-100 sm:text-xl">
-          Türkiye&apos;nin İlk Otonom Kentsel Denetim Platformu
+          Kentsel Denetim ve Saha Koordinasyon Platformu
         </p>
 
         <p className="mt-2 text-sm text-slate-400 sm:text-base">
-          Belediyeler için AI destekli saha denetimi
+          Görüntü, konum ve ekip yönlendirmesini tek panelde birleştirir
         </p>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -445,7 +445,7 @@ function HeroSection({
             className="group flex items-center gap-2 rounded-xl bg-orange-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-orange-900/40 transition hover:bg-orange-400"
           >
             <span className="flex h-2 w-2 rounded-full bg-emerald-400 group-hover:animate-pulse" />
-            Canlı Kamera ile Tespit
+            Canlı Denetim Başlat
           </button>
           <button
             type="button"
