@@ -242,7 +242,82 @@ function Sidebar({
   );
 }
 
-// Üst istatistik barı
+const HERO_METRIKLER = [
+  { deger: "3 Saniyede", etiket: "Analiz", ikon: "⚡", renk: "text-blue-400" },
+  { deger: "%94", etiket: "Tespit Doğruluğu", ikon: "🎯", renk: "text-emerald-400" },
+  { deger: "KVKK %100", etiket: "Uyumlu", ikon: "🛡️", renk: "text-emerald-400" },
+  { deger: "4", etiket: "İhlal Kategorisi", ikon: "📋", renk: "text-orange-400" },
+];
+
+// Hero banner — marka tanıtımı ve canlı demo CTA
+function HeroSection({ demoBaslat }: { demoBaslat: () => void }) {
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/40 px-6 py-10 sm:px-10 sm:py-14">
+      <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-blue-600/10 blur-3xl" aria-hidden />
+      <div className="pointer-events-none absolute -bottom-20 -left-10 h-48 w-48 rounded-full bg-emerald-600/5 blur-3xl" aria-hidden />
+
+      <div className="relative mx-auto max-w-3xl text-center">
+        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-500/25 bg-blue-500/10 px-4 py-1.5">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+          <span className="text-xs font-medium text-blue-300">B2G · Belediyeler İçin</span>
+        </div>
+
+        <h1 className="bg-gradient-to-r from-white via-blue-100 to-blue-400 bg-clip-text text-5xl font-black tracking-tight text-transparent sm:text-7xl">
+          KentAI
+        </h1>
+
+        <p className="mt-4 text-lg font-semibold leading-snug text-slate-100 sm:text-xl">
+          Türkiye&apos;nin İlk Otonom Kentsel Denetim Platformu
+        </p>
+
+        <p className="mt-2 text-sm text-slate-400 sm:text-base">
+          Belediyeler için AI destekli saha denetimi
+        </p>
+
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={demoBaslat}
+            className="group flex items-center gap-2 rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-900/40 transition hover:bg-blue-500 hover:shadow-blue-800/50"
+          >
+            <span className="flex h-2 w-2 rounded-full bg-emerald-400 group-hover:animate-pulse" />
+            Canlı Demo Başlat
+          </button>
+          <a
+            href="https://kent-zekasi-web.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-xl border border-slate-700 px-7 py-3.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800/60 hover:text-white"
+          >
+            kent-zekasi-web.vercel.app
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Hero metrik barı — platform yetenekleri
+function HeroMetrikBar() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+      {HERO_METRIKLER.map((m) => (
+        <div
+          key={m.etiket}
+          className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4 text-center transition hover:border-slate-700 hover:bg-slate-900"
+        >
+          <span className="text-lg opacity-70">{m.ikon}</span>
+          <p className={`mt-1 text-lg font-bold sm:text-xl ${m.renk}`}>{m.deger}</p>
+          <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-500 sm:text-xs">
+            {m.etiket}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Üst istatistik barı — operasyonel dashboard metrikleri
 function IstatistikBar({ stats }: { stats: Istatistikler }) {
   const kartlar = [
     { label: "Bugün Tespit", deger: stats.bugunTespit, renk: "text-blue-400", ikon: "🔍" },
@@ -389,6 +464,13 @@ export default function Home() {
     cozulenVaka: 5,
   });
   const inputRef = useRef<HTMLInputElement>(null);
+  const denetimRef = useRef<HTMLDivElement>(null);
+
+  // Canlı demo butonu — analiz paneline kaydırır
+  const demoBaslat = useCallback(() => {
+    denetimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => inputRef.current?.click(), 400);
+  }, []);
 
   const analizSifirla = useCallback(() => {
     setSonuclar([]);
@@ -518,7 +600,20 @@ export default function Home() {
         <div className="flex flex-1 flex-col xl:flex-row">
           {/* Orta içerik */}
           <main className="flex min-w-0 flex-1 flex-col gap-5 p-4 sm:gap-6 sm:p-6">
-            <IstatistikBar stats={istatistikler} />
+            <HeroSection demoBaslat={demoBaslat} />
+            <HeroMetrikBar />
+
+            <div className="flex items-center gap-3 pt-2">
+              <div className="h-px flex-1 bg-slate-800" />
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
+                Canlı Denetim Paneli
+              </span>
+              <div className="h-px flex-1 bg-slate-800" />
+            </div>
+
+            <div ref={denetimRef} id="denetim-paneli" className="scroll-mt-6">
+              <IstatistikBar stats={istatistikler} />
+            </div>
 
             <div className="grid flex-1 grid-cols-1 gap-5 xl:grid-cols-[1fr_300px] xl:gap-6">
               {/* Fotoğraf yükleme + analiz */}
